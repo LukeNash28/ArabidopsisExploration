@@ -16,3 +16,14 @@ Research performed using transcriptomic and physiological analyses suggests that
 
 Sodium salts are also not the sole class of salts that may induce salinity stress for plants. Genetic screening done by Sun et al. (2015) showed K+ transporter genes were upregulated significantly in tolerant ecotypes even when exposed to NaCl salinity up to 200 mM concentration, and the same study showed that Na+ transporter genes showed no discernible change in transcriptional output. This suggests that Na+ exposure does not necessarily lead to universal changes at the transcriptional level which in turn suggests that physiological changes may not necessarily be evident even if there is a genetic predisposition for tolerance to salt. A way to negate any effects as a result of any differential responses to different mineral ions would be to grow the ecotypes under exposure to different salts, especially K+, since it is entirely plausible that an ecotype’s tolerance to salt could encompass multiple ions or ones that are different to the one we used in the protocol. This conjecture consequently negates this study’s ability to characterise the exact trends in salt tolerance among said ecotypes.
 
+#### Bibliography
+Beck, J., Schmuths, H. & Schaal, B., 2008. Native range genetic variation in Arabidopsis thaliana is strongly geographically structured and reflects Pleistocene glacial dynamics. *Molecular Ecology*, 17(3), pp. 902-915.
+
+Jha, D., Shirley, N., Tester, M. & Roy, S., 2010. Variation in salinity tolerance and shoot sodium accumulation in Arabidopsis ecotypes linked to differences in the natural expression levels of transporters involved in sodium transport. *Plant, Cell & Environment*, 33(5), pp. 793-804.
+
+Sun, Y. et al., 2015. Potassium Retention under Salt Stress Is Associated with Natural Variation in Salinity Tolerance among Arabidopsis Accessions. *PLoS One*, 10(5), p. e0124032.
+
+Wang, Y. et al., 2013. Transcriptomic and Physiological Variations of Three Arabidopsis Ecotypes in Response to Salt Stress. *PLoS One*, 8(7), p. e69036.
+
+
+
