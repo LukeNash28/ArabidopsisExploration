@@ -1,0 +1,426 @@
+---
+title: "Plants"
+author: "Luke Nash"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Pre-requisite packages**
+
+```{r packages, echo=TRUE, error=F, warning=F, message=F}
+library(ggplot2)
+library(ggpubr)
+library(broom)
+library(plyr)
+library(dplyr)
+library(plotrix) 
+library(readxl)
+library(stats)
+library(tidyr)
+library(glue)
+library(sparklyr)
+library(DescTools)
+library(MVN)
+library(energy)
+library(npmv)
+```
+
+## Introduction
+
+This project is looking at the effects of salt concentration on the growth and proliferation of three ecotypes of *Arabidopsis thaliana*. For more information about the data collection, and some background information about the scientific context of this project, please read the README in the [GitHub repository for this project](https://github.com/LukeNash28/ArabidopsisExploration).
+
+For now, let's load and do some initial processing on the collected data. The data is imported from an Excel file as a data frame.
+
+```{r data loading,include=FALSE}
+Plants<-read_excel("~/Downloads/data.xlsx")
+Plants<-data.frame(Plants)
+```
+
+We're only interested in a few columns, so we can use `subset` to remove the unnecessary columns.
+
+```{r subset 1}
+Plants<-subset(Plants,select=c(Ecotype,Salt_Conc.,Combination,Root_Length,Rosette_Width,Leaf_no.,Lateral_root_no.))
+head(Plants)
+```
+
+#### Descriptive Statistics
+
+Let's look at the data's structure first so we know what we're dealing with.
+
+```{r str}
+str(Plants)
+names(Plants)
+```
+
+In this project we had four dependent variables - root length, rosette width, leaf number and lateral root number. Let's have a look at the summary statistics for each of those.
+
+``` {r central tendency}
+PlantsDep<-subset(Plants,select=c(Root_Length,Rosette_Width,Leaf_no.,Lateral_root_no.))
+PlantsSummary<- PlantsDep %>%
+  summarise(across(everything(), list(mean=mean,std_deviation=sd, variance=var)))
+print(PlantsSummary)
+```
+
+All these metrics have relatively high degree of variation in the data, with the standard deviations being 91%, 81%, 61% and 132.8% of the mean for root length, rosette width, leaf number and lateral root number respectively.
+
+One reason why they may be so high is because the data incorporates both the conditions (no salt and salt applied) as well as all three of the ecotypes. Consequently let's group the data by salt, then ecotype, then a combination of the two.
+
+``` {r grouped summary}
+#Create vectors for loops to iterate through
+Conditions<-c('Ecotype','Salt_Conc.','Combination')
+Measurements<-c('Root_Length','Rosette_Width','Leaf_no.','Lateral_root_no.')
+Results<-list() #Object to append results of the iterations to.
+
+#Nested for loop to iterate through conditions and measurements
+for (col in Conditions) {
+  for (measure in Measurements) {
+    result<- Plants %>%
+      group_by_at(col) %>%
+      summarise(Mean = mean(!!sym(measure)),
+                SD = sd(!!sym(measure)),
+                PSD = Mean + SD,
+                NSD = Mean - SD) %>%
+      mutate(across(where(is.numeric),~round(.,2)))
+    result_name <- paste(col,measure,sep=",")
+    Results[[result_name]]<-result
+  }
+}
+print(Results)
+```
+
+The standard deviations are still very high to the extent that in some cases the NSD value is negative, which for all of these measures is impossible - a plant can't have -1.36 lateral roots! 
+
+As a result, standard deviation is not much use for plotting purposes. Consequently, we will use standard error instead.
+
+``` {r grouped summary with std error and changing names}
+Results=c()
+
+for (col in Conditions) {
+  for (measure in Measurements) {
+    result<- Plants %>%
+      group_by_at(col) %>%
+      summarise(!!glue("{measure}_Mean") := mean(!!sym(measure)),
+                !!glue("{measure}_SE") := std.error(!!sym(measure)),
+                !!glue("{measure}_PSE") := mean(!!sym(measure)) + std.error(!!sym(measure)),
+                !!glue("{measure}_NSE") := mean(!!sym(measure)) - std.error(!!sym(measure))) %>%
+      mutate(across(where(is.numeric),~round(.,2)))
+    result_name <- paste(col,measure,sep=",")
+    Results[[result_name]]<-result
+  }
+}
+```
+
+### Data Visualisation
+
+To make our lives easier we're going to merge all the tibbles for each independent variable (Ecotype, Salt Conc. and Combination) using sparklyr's `join_all` function.
+
+```{r graph data preparation}
+#Left join all the tibbles in Results for each of Ecotype, Salt Conc. and Combination
+CombinedResults=c()
+
+for (condition in Conditions) {
+  col_dfs<-lapply(Measurements, function(measure) Results[[paste(condition, measure,sep=",")]])
+  col_df<- join_all(col_dfs, by= condition, type="left")
+  
+  combined_name<-paste(condition,"df", sep="_")
+  CombinedResults[[combined_name]] <- col_df
+}
+```
+
+Then partition the combined tibbles into separate data frames for each independent variable.
+
+```{r graph data preparation II}
+for (name in names(CombinedResults)) {
+  assign(name, CombinedResults[[name]])
+}
+```
+
+Now let's look at the graphs for each independent variable, starting with Ecotype.
+
+```{r Ecotype graph}
+RootEco<-ggplot(Ecotype_df,aes(x=Ecotype,y=Root_Length_Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="red",alpha=0.5)+
+  geom_errorbar(aes(x=Ecotype,ymin=Root_Length_NSE,ymax=Root_Length_PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average root length (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+RosetteEco<-ggplot(Ecotype_df,aes(x=Ecotype,y=Rosette_Width_Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="blue",alpha=0.5)+
+  geom_errorbar(aes(x=Ecotype,ymin=Rosette_Width_NSE,ymax=Rosette_Width_PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average rosette width (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LeafEco<-ggplot(Ecotype_df,aes(x=Ecotype,y=Leaf_no._Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="green",alpha=0.5)+
+  geom_errorbar(aes(x=Ecotype,ymin=Leaf_no._NSE,ymax=Leaf_no._PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average number of leaves")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LatRootEco<-ggplot(Ecotype_df,aes(x=Ecotype,y=Lateral_root_no._Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="orange",alpha=0.5)+
+  geom_errorbar(aes(x=Ecotype,ymin=Lateral_root_no._NSE,ymax=Lateral_root_no._PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average number of lateral roots")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+EcotypeComposite<-ggarrange(RootEco+rremove("x.title")+rremove("x.text"),
+          RosetteEco+rremove("x.title")+rremove("x.text"),
+          LeafEco,
+          LatRootEco,
+          common.legend=TRUE,
+          legend="right",
+          ncol=2,nrow=2,
+          font.label=list(size=16),
+          hjust=c(-0.5,0.7,-0.5,0.7),
+          vjust=c(1.5,1.5,0.5,0.5))
+
+print(EcotypeComposite)
+```
+
+As you can see, the size ranking of each of the three ecotypes is consistent across all four measurements, with ZuO being the lowest followed by Sha and then Col.
+
+Now let's look at salt concentration. For the sake of brevity, I will be omitting the code used to create this graph as the coding process is very similar and has already been established. The one exception is converting the `Salt_Conc.` to a factor (discrete).
+
+```{r Salt convert}
+Salt_Conc._df$Salt_Conc.<-as.factor(Salt_Conc._df$Salt_Conc.)
+```
+
+```{r Salt graph,echo=FALSE}
+RootSalt<-ggplot(Salt_Conc._df,aes(x=Salt_Conc.,y=Root_Length_Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="red",alpha=0.5)+
+  geom_errorbar(aes(x=Salt_Conc.,ymin=Root_Length_NSE,ymax=Root_Length_PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("NaCl concentration (mM)")+
+  ylab("Average root length (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+RosetteSalt<-ggplot(Salt_Conc._df,aes(x=Salt_Conc.,y=Rosette_Width_Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="blue",alpha=0.5)+
+  geom_errorbar(aes(x=Salt_Conc.,ymin=Rosette_Width_NSE,ymax=Rosette_Width_PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("NaCl concentration (mM)")+
+  ylab("Average rosette width (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LeafSalt<-ggplot(Salt_Conc._df,aes(x=Salt_Conc.,y=Leaf_no._Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="green",alpha=0.5)+
+  geom_errorbar(aes(x=Salt_Conc.,ymin=Leaf_no._NSE,ymax=Leaf_no._PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("NaCl concentration (mM)")+
+  ylab("Average number of leaves")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LatRootSalt<-ggplot(Salt_Conc._df,aes(x=Salt_Conc.,y=Lateral_root_no._Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="orange",alpha=0.5)+
+  geom_errorbar(aes(x=Salt_Conc.,ymin=Lateral_root_no._NSE,ymax=Lateral_root_no._PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("NaCl concentration (mM)")+
+  ylab("Average number of lateral roots")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+SaltComposite<-ggarrange(RootSalt+rremove("x.title")+rremove("x.text"),
+          RosetteSalt+rremove("x.title")+rremove("x.text"),
+          LeafSalt,
+          LatRootSalt,
+          common.legend=TRUE,
+          legend="right",
+          ncol=2,nrow=2,
+          font.label=list(size=16),
+          hjust=c(-0.5,0.7,-0.5,0.7),
+          vjust=c(1.5,1.5,0.5,0.5))
+
+print(SaltComposite)
+```
+
+Perhaps unsurprisingly, the plants growing in saline conditions grew far less well than the ones with no salt.
+
+Finally, let's look at the Combination.
+
+```{r Combination graph,echo=FALSE}
+RootCombo<-ggplot(Combination_df,aes(x=Combination,y=Root_Length_Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="red",alpha=0.5)+
+  geom_errorbar(aes(x=Combination,ymin=Root_Length_NSE,ymax=Root_Length_PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Combination")+
+  ylab("Average root length (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+RosetteCombo<-ggplot(Combination_df,aes(x=Combination,y=Rosette_Width_Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="blue",alpha=0.5)+
+  geom_errorbar(aes(x=Combination,ymin=Rosette_Width_NSE,ymax=Rosette_Width_PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Combination")+
+  ylab("Average rosette width (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LeafCombo<-ggplot(Combination_df,aes(x=Combination,y=Leaf_no._Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="green",alpha=0.5)+
+  geom_errorbar(aes(x=Combination,ymin=Leaf_no._NSE,ymax=Leaf_no._PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Combination")+
+  ylab("Average number of leaves")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LatRootCombo<-ggplot(Combination_df,aes(x=Combination,y=Lateral_root_no._Mean))+
+  geom_bar(position="dodge",stat="identity",colour="black",fill="orange",alpha=0.5)+
+  geom_errorbar(aes(x=Combination,ymin=Lateral_root_no._NSE,ymax=Lateral_root_no._PSE),width=0.4, position=position_dodge(width=0.9))+
+  xlab("Combination")+
+  ylab("Average number of lateral roots")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+ComboComposite<-ggarrange(RootCombo+rremove("x.title")+rremove("x.text"),
+          RosetteCombo+rremove("x.title")+rremove("x.text"),
+          LeafCombo,
+          LatRootCombo,
+          common.legend=TRUE,
+          legend="right",
+          ncol=2,nrow=2,
+          font.label=list(size=16),
+          hjust=c(-0.5,0.7,-0.5,0.7),
+          vjust=c(1.5,1.5,0.5,0.5))
+
+print(ComboComposite)
+```
+
+This mostly tells us the same thing as before about the hierarchy in the sizes of the ecotypes and the significant growth stunting in saline conditions.
+
+I'm going to present one more figure of a bar chart of Ecotype vs each measurement of size but grouped by Salt Concentration, but this will require our data to be formatted slightly differently.
+
+```{r Final graph processing}
+#Processing the data
+Plant_grouped<- Plants %>%
+  group_by(Combination) %>%
+  summarise(across(
+    Root_Length:Lateral_root_no.,
+    list(
+      M= ~mean(.),
+      PSE= ~mean(.)+ std.error(.),
+      NSE= ~mean(.)- std.error(.)
+    )
+  )) %>%
+  mutate(across(where(is.numeric),~round(.,2)))
+
+Plant_grouped<-data.frame(Plant_grouped)
+Type<-c("Col","Col","Sha","Sha","ZuO","ZuO")
+Salt<-rep(c(0,50),3)
+Plant_grouped<-data.frame(Type,Salt,Plant_grouped[-1])
+Plant_grouped$Salt<-as.factor(Plant_grouped$Salt)
+print(Plant_grouped)
+```
+
+This is now in the right format for plotting.
+
+```{r Final graph}
+RootGrouped<-ggplot(Plant_grouped,aes(fill=Salt,x=Type,y=Root_Length_M,group=Salt))+
+  geom_bar(position="dodge",stat="identity",colour="black")+
+  geom_errorbar(aes(x=Type, ymin=Root_Length_NSE,ymax=Root_Length_PSE),width=0.4,position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average root length (mm)")+
+  theme(axis.title.y=element_text(size=9))+
+  scale_fill_manual(values=c("red","blue"),name="NaCl concentration (mM)")+
+  theme_classic()
+
+RosetteGrouped<-ggplot(Plant_grouped,aes(fill=Salt,x=Type,y=Rosette_Width_M,group=Salt))+
+  geom_bar(position="dodge",stat="identity",colour="black")+
+  geom_errorbar(aes(x=Type, ymin=Rosette_Width_NSE,ymax=Rosette_Width_PSE),width=0.4,
+                position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average rosette width (mm)")+
+  scale_fill_manual(values=c("red","blue"),name="NaCl concentration (mM)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LeafGrouped<-ggplot(Plant_grouped,aes(fill=Salt,x=Type,y=Leaf_no._M,group=Salt))+
+  geom_bar(position="dodge",stat="identity",colour="black")+
+  geom_errorbar(aes(x=Type, ymin=Leaf_no._NSE,ymax=Leaf_no._PSE),width=0.4,
+                position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average number of leaves")+
+  scale_fill_manual(values=c("red","blue"),name="NaCl concentration (mM)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+LatRootGrouped<-ggplot(Plant_grouped,aes(fill=Salt,x=Type,y=Lateral_root_no._M,group=Salt))+
+  geom_bar(position="dodge",stat="identity",colour="black")+
+  geom_errorbar(aes(x=Type, ymin=Lateral_root_no._NSE,ymax=Lateral_root_no._PSE),width=0.4,
+                position=position_dodge(width=0.9))+
+  xlab("Ecotype")+
+  ylab("Average number of lateral roots")+
+  scale_fill_manual(values=c("red","blue"),name="NaCl concentration (mM)")+
+  theme(axis.title.y=element_text(size=9))+
+  theme_classic()
+
+GroupedComposite<-ggarrange(RootGrouped+rremove("x.title")+rremove("x.text"),
+          RosetteGrouped+rremove("x.title")+rremove("x.text"),
+          LeafGrouped,
+          LatRootGrouped,
+          common.legend=TRUE,
+          legend="right",
+          ncol=2,nrow=2,
+          font.label=list(size=16),
+          hjust=c(-0.5,0.7,-0.5,0.7),
+          vjust=c(1.5,1.5,0.5,0.5))
+
+print(GroupedComposite)
+```
+
+This shows something quite interesting: the size hierarchy in non-saline conditions (Col > Sha > ZuO) is either partially or entirely reversed, suggesting that **the extent to which the ecotypes are affected by salinity is different**.
+
+We can use diagnostic statistics to determine the statistical significance of this assertion.
+
+### Diagnostic Statistics
+
+When looking at ecotype, since we have a categorical variable influencing multiple dependent variables, we need a form of multivariate ANOVA. However, after carrying out a Mardia's multivariate normality test, the four measurements do not show any normality.
+
+```{r MVN}
+Variates<-Plants[-c(1:3)]
+mvn(data=Variates,mvnTest="mardia")
+```
+
+Therefore, we will use a very recently developed non-parametric version of the MANOVA. It has performed very well according to the very select few people who've used it and has stood up to "multivariate data which usually involve different, typically dependent characteristics measured in rather different units." according to the authors. It is available through the `npmv` package.
+
+```{r npmv}
+nonpartest(Root_Length | Rosette_Width | Leaf_no. | Lateral_root_no. ~ Ecotype, data=Plants, permreps=1000,plots=FALSE)
+```
+
+This test shows the ecotype to have some form of significant effect on all the measurements.
+
+For the salt concentration, we can perform a Hotelling's T^2^ test, as shown below.
+
+***NOTE: The only package offering non-parametric multiple comparisons equivalent to a multivariate Mann-Whitney test is no longer maintained, so we are going to have to bypass this assumption. Central Limit Theorem dictates that normality can be assumed owing to the sample size involved, but this is obviously not ideal. ***
+
+```{r Hotelling test}
+#Preparing the data
+Plants_sub<-Plants[-c(1,3)]
+`0_conc`=subset(Plants_sub,Salt_Conc.== 0)
+`50_conc`= subset(Plants_sub,Salt_Conc.== 50)
+`0_conc`<-`0_conc`[-1]
+`50_conc`<-`50_conc`[-1]
+
+#Performing the test
+HotellingsT2Test(x=`0_conc`,y=`50_conc`)
+```
+
+The test shows the two groups to differ significantly from each other in all four measurements.
+
+### Conclusions
+
+Based on the tests and visualisations carried out above, we can draw the following conclusions with a relatively high degree of confidence:
+
+* The growth of each of the three ecotypes was different.
+* Salt had a tangible impact on the growth of plants of all ecotypes, but...
+* Some ecotypes respond to salinity better than other ecotypes.
+
+To read more about the data collection and some evaluation points of the protocol, please read the README file in the [GitHub repository for this project](https://github.com/LukeNash28/ArabidopsisExploration).
